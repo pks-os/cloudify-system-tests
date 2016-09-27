@@ -17,6 +17,7 @@ RUN apt-get update && \
         python-pip \
         libxml2-dev \
         libxslt-dev \
+        libssl-dev \
         lib32z1-dev && \
     pip install pip --upgrade
 
