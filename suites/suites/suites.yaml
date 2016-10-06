@@ -50,7 +50,7 @@ variables:
   vcloud_instance: 7f26733b-b8c5-4621-ae28-6033cd465b79
   vcloud_url: https://vca.vmware.com
 
-  azure_resource_suffix: 0
+  azure_resource_suffix: 1
   azure_resource_prefix: sys
   azure_location_westus: westus
   azure_location_westeu: westeurope
