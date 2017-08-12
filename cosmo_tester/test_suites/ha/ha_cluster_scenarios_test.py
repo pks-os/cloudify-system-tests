@@ -13,6 +13,7 @@
 #    * See the License for the specific language governing permissions and
 #    * limitations under the License.
 
+from cStringIO import StringIO
 import pytest
 import time
 
@@ -62,6 +63,184 @@ def cluster(
 
     finally:
         cluster.destroy()
+
+
+@pytest.fixture(scope='function')
+def cluster2(request, cfy, ssh_key, module_tmpdir, attributes, logger):
+    """Like cluster, but not actually started
+
+    So that we get two managers but can use one to be the proxy.
+    """
+    import pudb; pu.db  # NOQA
+    cluster = CloudifyCluster.create_image_based(
+        cfy,
+        ssh_key,
+        module_tmpdir,
+        attributes,
+        logger,
+        number_of_managers=2,
+        create=False)
+
+    for manager in cluster.managers[1:]:
+        manager.upload_plugins = False
+
+    cluster.create()
+    try:
+        cluster.managers[0].use()
+
+        with cluster.managers[1].ssh() as fabric:
+            fabric.sudo('yum install socat -y')
+            yield cluster
+    finally:
+        cluster.destroy()
+
+
+@pytest.fixture(scope='function')
+def hello_world2(cfy, cluster2, attributes, ssh_key, tmpdir, logger):
+    cluster = cluster2
+    hw = HelloWorldExample(
+        cfy, cluster.managers[0], attributes, ssh_key, logger, tmpdir)
+    hw.blueprint_file = 'openstack-blueprint.yaml'
+    hw.inputs.update({
+        'agent_user': attributes.centos7_username,
+        'image': attributes.centos7_image_name,
+    })
+
+    yield hw
+    if hw.cleanup_required:
+        logger.info('Hello world cleanup required..')
+        cluster.managers[0].use()
+        hw.cleanup()
+
+
+PROXY_SERVICE_TEMPLATE = """
+[Unit]
+Description=Proxy for port {port}
+Wants=network-online.target
+
+[Service]
+User=root
+Group=root
+ExecStart=/bin/socat TCP-LISTEN:{port},fork TCP:{ip}:{port}
+Restart=always
+RestartSec=20s
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+UPDATE_PROVIDER_CTX_SCRIPT = """
+import sys
+from manager_rest.server import app
+from manager_rest.storage import get_storage_manager, models
+from manager_rest.constants import PROVIDER_CONTEXT_ID
+from sqlalchemy.orm.attributes import flag_modified
+
+
+def update_provider_context(manager_ip):
+    with app.app_context():
+        sm = get_storage_manager()
+        ctx = sm.get(models.ProviderContext, PROVIDER_CONTEXT_ID)
+        ctx.context['cloudify']['cloudify_agent']['broker_ip'] = manager_ip
+        flag_modified(ctx, 'context')
+        sm.update(ctx)
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print('Expected 1 argument - <manager-ip>')
+        print('Provided args: {0}'.format(sys.argv[1:]))
+        sys.exit(1)
+    update_provider_context(sys.argv[1])
+"""
+
+
+CREATE_CERTS_SCRIPT = """
+import logging
+import sys
+
+import utils
+
+
+class CtxWithLogger(object):
+    logger = logging.getLogger('internal-ssl-certs-logger')
+
+
+utils.ctx = CtxWithLogger()
+
+def generate_internal_ssl_cert(ips):
+    return utils._generate_ssl_certificate(
+        ips,
+        ips[0],
+        utils.INTERNAL_SSL_CERT_FILENAME,
+        utils.INTERNAL_SSL_KEY_FILENAME,
+        utils.INTERNAL_PKCS12_FILENAME,
+    )
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print('Expected at least 1 argument - <manager-ip>')
+        print('Provided args: {0}'.format(sys.argv[1:]))
+        sys.exit(1)
+    utils.generate_internal_ssl_cert(sys.argv[1:])
+
+"""
+
+
+def test_agent_via_proxy(cfy, cluster2, hello_world2, logger):
+    # use separate cluster2 and helloworld2; really, i should've made a
+    # separate test module
+
+    # - run 2 managers
+    # - one of them stops being a manager, and instead is the proxy
+    # - the other is the manager, and updates its internal cert and provider
+    # context to the proxy ips
+
+    cluster = cluster2
+    hello_world = hello_world2
+
+    # prepare the proxy: stop manager stuff, run socat on 2 ports
+    # TODO use a clean centos machine, not a manager, so that all the stopping
+    # manager stuff isn't required
+    with cluster.managers[1].ssh() as fabric:
+        ip = cluster.managers[0].private_ip_address
+        for service in ['cloudify-rabbitmq', 'cloudify-amqpinflux', 'cloudify-riemann', 'nginx', 'cloudify-restservice']:  # NOQA
+            fabric.sudo('systemctl disable {0}'.format(service))
+            fabric.sudo('systemctl stop {0}'.format(service))
+        for port in [5671, 53333]:
+            service = 'proxy_{0}'.format(port)
+            filename = '/usr/lib/systemd/system/{0}.service'.format(service)
+            fabric.put(
+                StringIO(PROXY_SERVICE_TEMPLATE.format(ip=ip, port=port)),
+                filename, use_sudo=True)
+            fabric.sudo('systemctl enable {0}'.format(service))
+            fabric.sudo('systemctl start {0}'.format(service))
+
+    # prepare the actual manager to point to the proxy:
+    #  - provider context broker_ip
+    #  - TODO: other stuff in the context? (fileserver url?)
+    #  - generate certs using the proxxy ip
+    #  - note: we need cert that has both proxy and manager ip, because
+    #    manager's own mgmtworker will try to contact restservice via the old
+    #    ip (unless we change that?)
+    with cluster.managers[0].ssh() as fabric:
+        fabric.put(StringIO(UPDATE_PROVIDER_CTX_SCRIPT),
+                   '/tmp/update_ctx.py', use_sudo=True)
+        fabric.put(StringIO(CREATE_CERTS_SCRIPT),
+                   '/tmp/create_certs.py', use_sudo=True)
+        cmd = '/opt/mgmtworker/env/bin/python /tmp/create_certs {0} {1}'.format(  # NOQA
+            cluster.managers[1].private_ip_address,
+            cluster.managers[0].private_ip_address)
+        fabric.sudo(cmd)
+
+        cmd = 'MANAGER_REST_CONFIG_PATH=/opt/manager/cloudify-rest.conf /opt/manager/env/bin/python /tmp/update_ctx.py {0}'.format(  # NOQA
+            cluster.managers[1].private_ip_address)
+        fabric.sudo(cmd)
+
+    hello_world.upload_blueprint()
+    hello_world.create_deployment()
+    hello_world.install()
 
 
 @pytest.fixture(scope='function')
