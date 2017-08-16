@@ -157,9 +157,6 @@ iptables -A INPUT -p tcp --dport 53333 -j DROP
 
 
 def test_agent_via_proxy(cfy, cluster, hello_world, logger):
-    # use separate cluster2 and helloworld2; really, i should've made a
-    # separate test module
-
     # - run 2 managers
     # - one of them stops being a manager, and instead is the proxy
     # - the other is the manager, and updates its internal cert and provider
@@ -176,14 +173,6 @@ def test_agent_via_proxy(cfy, cluster, hello_world, logger):
                 filename, use_sudo=True)
             fabric.sudo('systemctl enable {0}'.format(service))
             fabric.sudo('systemctl start {0}'.format(service))
-
-    # prepare the actual manager to point to the proxy:
-    #  - provider context broker_ip
-    #  - TODO: other stuff in the context? (fileserver url?)
-    #  - generate certs using the proxxy ip
-    #  - note: we need cert that has both proxy and manager ip, because
-    #    manager's own mgmtworker will try to contact restservice via the old
-    #    ip (unless we change that?)
 
     create_certs_path = '/opt/cloudify/manager-ip-setter/create_certs.py'
     agent_config = {
@@ -219,6 +208,8 @@ def test_agent_via_proxy(cfy, cluster, hello_world, logger):
             if cmd:
                 fabric.sudo(cmd)
 
+    cfy.cluster.start(timeout=600,
+                      cluster_host_ip=cluster.managers[0].private_ip_address)
     hello_world.upload_blueprint()
     hello_world.create_deployment()
     hello_world.install()
