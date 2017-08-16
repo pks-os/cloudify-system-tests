@@ -27,9 +27,8 @@ def cluster(request, cfy, ssh_key, module_tmpdir, attributes, logger):
 
     So that we get two managers but can use one to be the proxy.
     """
-    import pudb; pu.db  # NOQA
     managers = [
-        MANAGERS['4.1.1.1'](upload_plugins=False),
+        MANAGERS['4.1.1.1'](),
         MANAGERS['notamanager'](upload_plugins=False)
     ]
     cluster = CloudifyCluster.create_image_based(
@@ -146,10 +145,12 @@ if __name__ == '__main__':
 
 IPTABLES_TEMPLATE = """
 iptables -A INPUT -p tcp -s 127.0.0.1 --dport 5671 -j ACCEPT
+iptables -A INPUT -p tcp -s {own_ip} --dport 5671 -j ACCEPT
 iptables -A INPUT -p tcp -s {proxy_ip} --dport 5671 -j ACCEPT
 iptables -A INPUT -p tcp --dport 5671 -j DROP
 
 iptables -A INPUT -p tcp -s 127.0.0.1 --dport 53333 -j ACCEPT
+iptables -A INPUT -p tcp -s {own_ip} --dport 53333 -j ACCEPT
 iptables -A INPUT -p tcp -s {proxy_ip} --dport 53333 -j ACCEPT
 iptables -A INPUT -p tcp --dport 53333 -j DROP
 """
@@ -205,13 +206,19 @@ def test_agent_via_proxy(cfy, cluster, hello_world, logger):
         fabric.sudo(cmd)
 
         fabric.put(StringIO(json.dumps(agent_config)),
-                   '/opt/manager/agent_config.json')
+                   '/opt/manager/agent_config.json', use_sudo=True)
+        fabric.sudo('printf "\\nAGENT_CONFIG_PATH=/opt/manager/agent_config.json\\n" >> /etc/sysconfig/cloudify-mgmtworker')  # NOQA
+        fabric.sudo('systemctl restart cloudify-rabbitmq')
+        fabric.sudo('systemctl restart nginx')
+        fabric.sudo('systemctl restart cloudify-mgmtworker')
 
         iptables_cmds = IPTABLES_TEMPLATE.format(
+            own_ip=cluster.managers[0].private_ip_address,
             proxy_ip=cluster.managers[1].private_ip_address).splitlines()
         for cmd in iptables_cmds:
             if cmd:
                 fabric.sudo(cmd)
+
     hello_world.upload_blueprint()
     hello_world.create_deployment()
     hello_world.install()
