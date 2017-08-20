@@ -82,20 +82,28 @@ class HighAvailabilityHelper(object):
 
             logger.debug('_wait_cluster_status: none of the nodes responded')
             time.sleep(poll_interval)
-
+        import pudb; pu.db  # NOQA
         raise RuntimeError('Timeout when waiting for cluster status')
 
     @staticmethod
     def verify_nodes_status(manager, cfy, logger):
         logger.info('Verifying that manager %s is a leader '
                     'and others are replicas', manager.ip_address)
-        cfy.cluster.nodes.list()
-        nodes = manager.client.cluster.nodes.list()
+        try:
+            cfy.cluster.nodes.list()
+            nodes = manager.client.cluster.nodes.list()
+        except Exception as e:
+            import pudb; pu.db  # NOQA
+            raise
         for node in nodes:
             if node.name == str(manager.ip_address):
+                if not node.master:
+                    import pudb; pu.db  # NOQA
                 assert node.master is True
                 logger.info('Manager %s is a leader ', node.name)
             else:
+                if node.master:
+                    import pudb; pu.db  # NOQA
                 assert node.master is not True
                 logger.info('Manager %s is a replica ', node.name)
 

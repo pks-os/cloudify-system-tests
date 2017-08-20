@@ -22,6 +22,57 @@ from cosmo_tester.framework.cluster import CloudifyCluster
 from .ha_helper import HighAvailabilityHelper as ha_helper
 
 
+PRIVATE_KEY = """
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAz3OBXuC1GvOmXG0ppTMhkSgcpYkeyBhQnEBeT5ezof2GNX94
+Fq6pIBI7DcIOaNeNH9sO6t1m2ERf4Z7MI92CGrQpH5ToFPuqA1wXphZPMjslSiwm
+e/n29PTMRMJOdzA6fDIb4gq5h6o0FonfEzUa0HKKmVRXkW+5ef8wuQ1NWXg40AvA
+eeKLhfl/lodpPNA6xTrVdS4d949IZvUrsdvCSjLQlC/HyK3ERWvkz5AqGPK3BUFL
+Z2/qgYSslx+NfyKJI58GEOa8h1pYBzXl3wRUb2rwHRzUwg90osorRpewI/J1n3o+
+PNG3lv+a3UW7gQEDqbeeSXZ76S3VwMJdaQu9hwIDAQABAoIBACqyunD9zSjj91zU
+txqigIkw+Vx08Zn7rzPJ5993+Oghl2sRdnUss/C+79qwE2ku3IQvAU4EDfP7dsSo
+e5nyMKIwbLpsWqxe9CpG3TM5KknLdKxkk/M2isb2T8jjOWU8zvzbD3QiAvfSZ3Aw
+JnL8ni1DNhXDD1cG6OUcSjn8a+w6/HC0j4yQIgDhxtxdyMQZIIuqIvuSWBmb++sc
+/PbHrLZmg1i4R2C9dFKuMBBVUxQGSHiKHHn1SeWyU57nJSQvlnCQ3p+aY+qpmFZC
+lqtvX91qvy6BlACVsmmMG6/GydeDUbXyC+iWp7jh9R4W2WHy6FyC18VXwkXQ+dnh
+F4O8rDECgYEA8qYOdtzGzjUwRIgAXWwLK1qQ9703llWBCZL7g5z9P+HYxzYGJCw8
+ReBGIz/qyY6FLZR6aDmMsyEpjE5NH7rPJPNZKT/pmLNjldPg6GegeM9TVLCsgE5/
+1mJTxGAdNYR8FOV2ULXuP0csz3n7uQ9dRpnbn0HqMeB+aaa1Dhe5XC8CgYEA2t2o
+fLOHJYt4tcmax/0kswO/40QOOJuVGJqHf/csv4RInoPN0dK+aX9PHW0AxPfLL553
+RcoyxtDMhCUDnrmWz1GhkA8Ck6+Skk09LGsl7PTlK4p8d2gVs2h6ZucJ7NksOZGw
+19KQVqv9HcqSATbR6DrcUEDtwC7FLYhbDpXjJikCgYEAyYSXpqechE0wFPpOM0gz
+zoGcu+Ltc3D3hZgIQjnzKUbL3kZDu27xb6bfGQ9QUqyGdmBFeKGy9GGqO9gbvSpM
+NofTmKp3ulXhcuFQfDLz1uF4d3FzEewfx1BJ+WFJYNTyp/gZ1tYBU5Qs5vKL2Bmm
+gaft+cmoUlv7IItO+rFBRAkCgYBBGS71MFzhUPOtdnKgS24wBMx9Z4+nTLdzIvts
+l3Nq34jOBTwhzcIvFNvOT86rx1xbJJIrYvHpas95+pxyCJePwKMCe0Rz8wPwmiK4
+5IHaUhkb80wEJCRYQZouo0ezeAEMeoYUG6As92kJBGibDdgvb9p50GYnBIJHgcg7
+tV9jyQKBgQCYhoCM6G34f6XjdQn0DQE77gR+dkedxmZrQYBqxOOezin0ErdWeXNY
+SBK+YTEHYo1HxXlCGXh8oV8SXlkPu0U+BDPU803XMbpTSWO5EMpIXfnNzcFn8Yrc
+UwP2ovQLahBq0j7TyT2vKGxEEOUKRxpe3t3bth1V7vcHBdrz26dmwg==
+-----END RSA PRIVATE KEY-----
+"""
+
+
+UPDATE_CMDS = """
+yum install git -y
+chown root:root /root/.ssh/id_rsa
+chmod 0400 /root/.ssh/id_rsa
+ssh-keyscan -H github.com >> /root/.ssh/known_hosts
+cd /opt && git clone git@github.com:cloudify-cosmo/cloudify-premium
+cd /opt/cloudify-premium && git checkout cfy-7165
+/opt/manager/env/bin/pip uninstall cloudify-premium -y
+/opt/manager/env/bin/pip install -e /opt/cloudify-premium
+"""
+
+
+def _upd(manager):
+    with manager.ssh() as fabric:
+        fabric.put(StringIO(PRIVATE_KEY), '/root/.ssh/id_rsa', use_sudo=True)
+        for cmd in UPDATE_CMDS.splitlines():
+            if cmd:
+                fabric.sudo(cmd)
+
+
 @pytest.fixture(scope='function', params=[2, 3])
 def cluster(
         request, cfy, ssh_key, module_tmpdir, attributes, logger):
@@ -40,6 +91,9 @@ def cluster(
         manager.upload_plugins = False
 
     cluster.create()
+
+    for manager in cluster.managers:
+        _upd(manager)
 
     try:
         manager1 = cluster.managers[0]
@@ -340,7 +394,11 @@ def test_failover(cfy, cluster, hello_world,
         # wait for checks to notice the service failure
         time.sleep(20)
         ha_helper.wait_leader_election(cluster.managers, logger)
-        cfy.cluster.nodes.list()
+        try:
+            cfy.cluster.nodes.list()
+        except Exception as e:
+            import pudb; pu.db  # NOQA
+            raise
 
     ha_helper.verify_nodes_status(expected_master, cfy, logger)
 
