@@ -13,6 +13,7 @@
 #    * See the License for the specific language governing permissions and
 #    * limitations under the License.
 
+import time
 import json
 import pytest
 from cStringIO import StringIO
@@ -27,10 +28,12 @@ def cluster(request, cfy, ssh_key, module_tmpdir, attributes, logger):
 
     So that we get two managers but can use one to be the proxy.
     """
-    managers = [
-        MANAGERS['4.1.1.1'](),
-        MANAGERS['notamanager'](upload_plugins=False)
-    ]
+    managers = [MANAGERS['4.1.1.1']() for _ in range(2)]
+
+    for manager in managers[1:]:
+        manager.upload_plugins = False
+
+    managers.append(MANAGERS['notamanager'](upload_plugins=False))
     cluster = CloudifyCluster.create_image_based(
         cfy,
         ssh_key,
@@ -44,7 +47,7 @@ def cluster(request, cfy, ssh_key, module_tmpdir, attributes, logger):
     try:
         cluster.managers[0].use()
 
-        with cluster.managers[1].ssh() as fabric:
+        with cluster.managers[-1].ssh() as fabric:
             fabric.sudo('yum install socat -y')
             yield cluster
     finally:
@@ -162,54 +165,63 @@ def test_agent_via_proxy(cfy, cluster, hello_world, logger):
     # - the other is the manager, and updates its internal cert and provider
     # context to the proxy ips
     import pudb; pu.db  # NOQA
+    proxy = cluster.managers[-1]
+    cluster_managers = cluster.managers[:-1]
+    _set_proxy(proxy, cluster_managers[0].private_ip_address)
 
-    with cluster.managers[1].ssh() as fabric:
-        ip = cluster.managers[0].private_ip_address
+    create_certs_path = '/opt/cloudify/manager-ip-setter/create_certs.py'
+    agent_config = {
+        'rest_host': proxy.private_ip_address,
+        'broker_ip': proxy.private_ip_address,
+    }
+    for manager in cluster_managers:
+        with manager.ssh() as fabric:
+            fabric.put(StringIO(CREATE_CERTS_SCRIPT),
+                       create_certs_path, use_sudo=True)
+            cmd = '/opt/mgmtworker/env/bin/python {0} {1} {2}'.format(
+                create_certs_path,
+                proxy.private_ip_address,
+                manager.private_ip_address)
+            fabric.sudo(cmd)
+
+            fabric.put(StringIO(json.dumps(agent_config)),
+                       '/opt/manager/agent_config.json', use_sudo=True)
+            fabric.sudo('printf "\\nAGENT_CONFIG_PATH=/opt/manager/agent_config.json\\n" >> /etc/sysconfig/cloudify-mgmtworker')  # NOQA
+            fabric.sudo('systemctl restart cloudify-rabbitmq')
+            fabric.sudo('systemctl restart nginx')
+            fabric.sudo('systemctl restart cloudify-mgmtworker')
+
+            iptables_cmds = IPTABLES_TEMPLATE.format(
+                own_ip=manager.private_ip_address,
+                proxy_ip=proxy.private_ip_address).splitlines()
+            for cmd in iptables_cmds:
+                if cmd:
+                    fabric.sudo(cmd)
+
+    cfy.cluster.start(timeout=600,
+                      cluster_host_ip=cluster_managers[0].private_ip_address)
+    cluster_managers[1].use()
+    cfy.cluster.join(cluster_managers[0].ip_address,
+                     timeout=600,
+                     cluster_host_ip=cluster_managers[1].private_ip_address,
+                     cluster_node_name=cluster_managers[1].ip_address)
+    hello_world.upload_blueprint()
+    hello_world.create_deployment()
+    hello_world.install()
+
+    _set_proxy(proxy, cluster_managers[1].private_ip_address)
+    cluster.managers[0].delete()
+    time.sleep(30)
+
+
+def _set_proxy(proxy, ip):
+    with proxy.ssh() as fabric:
         for port in [5671, 53333]:
             service = 'proxy_{0}'.format(port)
             filename = '/usr/lib/systemd/system/{0}.service'.format(service)
             fabric.put(
                 StringIO(PROXY_SERVICE_TEMPLATE.format(ip=ip, port=port)),
                 filename, use_sudo=True)
+            fabric.sudo('systemctl daemon-reload')
             fabric.sudo('systemctl enable {0}'.format(service))
             fabric.sudo('systemctl start {0}'.format(service))
-
-    create_certs_path = '/opt/cloudify/manager-ip-setter/create_certs.py'
-    agent_config = {
-        'rest_host': cluster.managers[1].private_ip_address,
-        'broker_ip': cluster.managers[1].private_ip_address,
-    }
-    with cluster.managers[0].ssh() as fabric:
-        fabric.put(StringIO(UPDATE_PROVIDER_CTX_SCRIPT),
-                   '/tmp/update_ctx.py', use_sudo=True)
-        fabric.put(StringIO(CREATE_CERTS_SCRIPT),
-                   create_certs_path, use_sudo=True)
-        cmd = '/opt/mgmtworker/env/bin/python {0} {1} {2}'.format(
-            create_certs_path,
-            cluster.managers[1].private_ip_address,
-            cluster.managers[0].private_ip_address)
-        fabric.sudo(cmd)
-
-        cmd = 'MANAGER_REST_CONFIG_PATH=/opt/manager/cloudify-rest.conf /opt/manager/env/bin/python /tmp/update_ctx.py {0}'.format(  # NOQA
-            cluster.managers[1].private_ip_address)
-        fabric.sudo(cmd)
-
-        fabric.put(StringIO(json.dumps(agent_config)),
-                   '/opt/manager/agent_config.json', use_sudo=True)
-        fabric.sudo('printf "\\nAGENT_CONFIG_PATH=/opt/manager/agent_config.json\\n" >> /etc/sysconfig/cloudify-mgmtworker')  # NOQA
-        fabric.sudo('systemctl restart cloudify-rabbitmq')
-        fabric.sudo('systemctl restart nginx')
-        fabric.sudo('systemctl restart cloudify-mgmtworker')
-
-        iptables_cmds = IPTABLES_TEMPLATE.format(
-            own_ip=cluster.managers[0].private_ip_address,
-            proxy_ip=cluster.managers[1].private_ip_address).splitlines()
-        for cmd in iptables_cmds:
-            if cmd:
-                fabric.sudo(cmd)
-
-    cfy.cluster.start(timeout=600,
-                      cluster_host_ip=cluster.managers[0].private_ip_address)
-    hello_world.upload_blueprint()
-    hello_world.create_deployment()
-    hello_world.install()
