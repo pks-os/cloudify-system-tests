@@ -235,12 +235,12 @@ def test_agent_via_proxy(cfy, cluster, hello_world, logger):
     hello_world.create_deployment()
     hello_world.install()
 
-    _set_proxy(proxy, cluster_managers[1].private_ip_address)
     cluster.managers[0].delete()
+    _set_proxy(proxy, cluster_managers[1].private_ip_address, restart=True)
     time.sleep(30)
 
 
-def _set_proxy(proxy, ip):
+def _set_proxy(proxy, ip, restart=False):
     with proxy.ssh() as fabric:
         for port in [5671, 53333]:
             service = 'proxy_{0}'.format(port)
@@ -251,3 +251,5 @@ def _set_proxy(proxy, ip):
             fabric.sudo('systemctl daemon-reload')
             fabric.sudo('systemctl enable {0}'.format(service))
             fabric.sudo('systemctl start {0}'.format(service))
+            if restart:
+                fabric.sudo('systemctl restart {0}'.format(service))
