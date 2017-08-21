@@ -159,6 +159,35 @@ iptables -A INPUT -p tcp --dport 53333 -j DROP
 """
 
 
+CERTS = [
+    '/etc/cloudify/ssl/cloudify_internal_cert.pem',
+    '/etc/cloudify/ssl/cloudify_internal_key.pem',
+    '/etc/cloudify/ssl/cloudify_internal.p12',
+]
+
+
+def _make_certs(manager, proxy_ip):
+    create_certs_path = '/opt/cloudify/manager-ip-setter/create_certs.py'
+    with manager.ssh() as fabric:
+        fabric.put(StringIO(CREATE_CERTS_SCRIPT),
+                   create_certs_path, use_sudo=True)
+        cmd = '/opt/mgmtworker/env/bin/python {0} {1} {2}'.format(
+            create_certs_path,
+            proxy_ip,
+            manager.private_ip_address)
+        fabric.sudo(cmd)
+        certs = [StringIO() for _ in CERTS]
+        for path, dest in zip(CERTS, certs):
+            fabric.get(path, dest, use_sudo=True)
+    return certs
+
+
+def _upload_certs(manager, certs):
+    with manager.ssh() as fabric:
+        for path, src in zip(CERTS, certs):
+            fabric.put(src, path, use_sudo=True)
+
+
 def test_agent_via_proxy(cfy, cluster, hello_world, logger):
     # - run 2 managers
     # - one of them stops being a manager, and instead is the proxy
@@ -169,21 +198,18 @@ def test_agent_via_proxy(cfy, cluster, hello_world, logger):
     cluster_managers = cluster.managers[:-1]
     _set_proxy(proxy, cluster_managers[0].private_ip_address)
 
-    create_certs_path = '/opt/cloudify/manager-ip-setter/create_certs.py'
     agent_config = {
         'rest_host': proxy.private_ip_address,
         'broker_ip': proxy.private_ip_address,
     }
+    certs = None
     for manager in cluster_managers:
-        with manager.ssh() as fabric:
-            fabric.put(StringIO(CREATE_CERTS_SCRIPT),
-                       create_certs_path, use_sudo=True)
-            cmd = '/opt/mgmtworker/env/bin/python {0} {1} {2}'.format(
-                create_certs_path,
-                proxy.private_ip_address,
-                manager.private_ip_address)
-            fabric.sudo(cmd)
+        if certs is None:
+            certs = _make_certs(manager, proxy.private_ip_address)
+        else:
+            _upload_certs(manager, certs)
 
+        with manager.ssh() as fabric:
             fabric.put(StringIO(json.dumps(agent_config)),
                        '/opt/manager/agent_config.json', use_sudo=True)
             fabric.sudo('printf "\\nAGENT_CONFIG_PATH=/opt/manager/agent_config.json\\n" >> /etc/sysconfig/cloudify-mgmtworker')  # NOQA
