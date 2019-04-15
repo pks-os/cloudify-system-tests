@@ -1,5 +1,5 @@
 ########
-# Copyright (c) 2018 Cloudify Platform Ltd. All rights reserved
+# Copyright (c) 2019 Cloudify Platform Ltd. All rights reserved
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 #    * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #    * See the License for the specific language governing permissions and
 #    * limitations under the License.
+
 import textwrap
 from abc import ABCMeta, abstractproperty
 
@@ -31,7 +32,6 @@ from fabric import api as fabric_api
 from fabric import context_managers as fabric_context_managers
 
 from cosmo_tester.framework import util
-from ..test_suites.ha.ha_helper import start_cluster
 
 from cloudify_cli.constants import DEFAULT_TENANT_NAME
 
@@ -639,7 +639,7 @@ class _CloudifyMessageQueueOnly(_CloudifyManager):
         self._logger = logger
         self._tmpdir = os.path.join(tmpdir, str(uuid.uuid4()))
         os.makedirs(self._tmpdir)
-        self.additional_install_config = {}
+        self.additional_install_config = {'rabbitmq': {}}
 
     @retrying.retry(stop_max_attempt_number=6 * 10, wait_fixed=10000)
     def verify_services_are_running(self):
@@ -1210,7 +1210,13 @@ class DistributedInstallationCloudifyManager(TestHosts):
         # Required instead of implementing a deep-copy function with huge
         # overhead
         self.message_queue.additional_install_config['rabbitmq'].update({
-            'broker_cert_path': '/tmp/rabbitmq_cert.crt'
+            'broker_cert_path': '/tmp/rabbitmq.crt'
+        })
+        self.message_queue.additional_install_config.update({
+            'ssl_inputs': {
+                'ca_cert_path': '/tmp/root.crt',
+                'ca_key_path': '/tmp/root.key'
+            }
         })
 
         # Generating client certificates for every client instance
@@ -1243,6 +1249,9 @@ class DistributedInstallationCloudifyManager(TestHosts):
             instance.additional_install_config['postgresql_client'].update({
                 'ssl_enabled': 'true'
             })
+            instance.additional_install_config['rabbitmq'].update({
+                'broker_cert_path': '/tmp/rabbitmq.crt'
+            })
             instance.additional_install_config.update({
                 'ssl_inputs': {
                     'postgresql_client_cert_path':
@@ -1265,7 +1274,7 @@ class DistributedInstallationCloudifyManager(TestHosts):
             (self.message_queue_cert_path, '/tmp/rabbitmq.crt'),
             (self.message_queue_key_path, '/tmp/rabbitmq.key')
         ]
-        cluster_instances += [self.database]
+        cluster_instances += [self.database, self.message_queue]
         for instance in cluster_instances:
             for src, dst in certificates_files_to_copy:
                 instance.put_remote_file(dst, src)
@@ -1282,7 +1291,6 @@ class DistributedInstallationCloudifyManager(TestHosts):
         self.manager.bootstrap()
         if self.cluster:
             self.manager.use()
-            start_cluster(self.manager, self.manager._cfy)
             for joining_manager in self.joining_managers:
                 joining_manager.bootstrap()
             if self.sanity:
