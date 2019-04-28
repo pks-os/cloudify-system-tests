@@ -454,7 +454,7 @@ class _CloudifyManager(VM):
         config_file.write_text(install_config_str)
         return config_file
 
-    def bootstrap(self, is_db=False):
+    def bootstrap(self, enter_sanity_mode=True):
         manager_install_rpm = \
             ATTRIBUTES.cloudify_manager_install_rpm_url.strip() or \
             util.get_manager_install_rpm_url()
@@ -474,7 +474,7 @@ class _CloudifyManager(VM):
                 '/etc/cloudify/config.yaml'
             )
             fabric_ssh.run('cfy_manager install')
-        if not is_db:
+        if enter_sanity_mode:
             self.enter_sanity_mode()
 
     def _create_openstack_config_file(self):
@@ -570,6 +570,9 @@ class _CloudifyDatabaseOnly(_CloudifyManager):
                     'PostgreSQL is not in an active state, Error: {0}.'
                     ' Retrying...'.format(e.message))
 
+    def bootstrap(self, enter_sanity_mode=False):
+        super(_CloudifyDatabaseOnly, self).bootstrap(enter_sanity_mode)
+
     def api_version(self):
         pass
 
@@ -654,6 +657,9 @@ class _CloudifyMessageQueueOnly(_CloudifyManager):
                 self._logger.warn(
                     'RabbitMQ is not in an active state, Error: {0}.'
                     ' Retrying...'.format(e.message))
+
+    def bootstrap(self, enter_sanity_mode=False):
+        super(_CloudifyMessageQueueOnly, self).bootstrap(enter_sanity_mode)
 
     def api_version(self):
         pass
@@ -1300,7 +1306,7 @@ class DistributedInstallationCloudifyManager(TestHosts):
         super(DistributedInstallationCloudifyManager, self).\
             _bootstrap_managers()
         self._create_ssl_certificates_on_instances()
-        self.database.bootstrap(is_db=True)
+        self.database.bootstrap()
         self.message_queue.bootstrap()
         self.manager.bootstrap()
         if self.cluster:
