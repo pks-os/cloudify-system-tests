@@ -1228,9 +1228,9 @@ class DistributedInstallationCloudifyManager(TestHosts):
                                       self.ca_key_path)
 
         self.message_queue.additional_install_config['rabbitmq'].update({
-            'broker_ca_path': '/tmp/{0}'.format(self.ROOT_CERT_NAME),
-            'broker_cert_path': '/tmp/{0}'.format(self.RABBITMQ_CERT_NAME),
-            'broker_key_path': '/tmp/{0}'.format(self.RABBITMQ_KEY_NAME)
+            'ca_path': '/tmp/{0}'.format(self.ROOT_CERT_NAME),
+            'cert_path': '/tmp/{0}'.format(self.RABBITMQ_CERT_NAME),
+            'key_path': '/tmp/{0}'.format(self.RABBITMQ_KEY_NAME)
         })
 
         # Generating client certificates for every client instance
@@ -1270,16 +1270,18 @@ class DistributedInstallationCloudifyManager(TestHosts):
                 'ssl_enabled': 'true'
             })
             instance.additional_install_config['rabbitmq'].update({
-                'broker_cert_path': '/tmp/rabbitmq.crt'
+                'ca_path': '/tmp/{0}'.format(self.ROOT_CERT_NAME)
             })
             instance.additional_install_config.update({
                 'ssl_inputs': {
                     'postgresql_client_cert_path':
-                        '/tmp/postgresql{0}.crt'.format(instance.index),
+                        '/tmp/'.format(self.POSTGRESQL_CLIENT_CERT_NAME.format(
+                            instance.index)),
                     'postgresql_client_key_path':
-                        '/tmp/postgresql{0}.key'.format(instance.index),
-                    'ca_cert_path': '/tmp/root.crt',
-                    'ca_key_path': '/tmp/root.key'
+                        '/tmp/'.format(self.POSTGRESQL_CLIENT_KEY_NAME.format(
+                            instance.index)),
+                    'ca_cert_path': '/tmp/{0}'.format(self.ROOT_CERT_NAME),
+                    'ca_key_path': '/tmp/{0}'.format(self.ROOT_KEY_NAME)
                 }
             })
 
@@ -1287,12 +1289,18 @@ class DistributedInstallationCloudifyManager(TestHosts):
         # and all the clients certificates and keys to all the servers
         # Each certificate will be used with its relevant instance
         certificates_files_to_copy += [
-            (self.ca_cert_path, '/tmp/root.crt'),
-            (self.ca_key_path, '/tmp/root.key'),
-            (self.server_cert_path, '/tmp/server.crt'),
-            (self.server_key_path, '/tmp/server.key'),
-            (self.message_queue_cert_path, '/tmp/rabbitmq.crt'),
-            (self.message_queue_key_path, '/tmp/rabbitmq.key')
+            (self.ca_cert_path,
+             '/tmp/{0}'.format(self.ROOT_CERT_NAME)),
+            (self.ca_key_path,
+             '/tmp/{0}'.format(self.ROOT_KEY_NAME)),
+            (self.server_cert_path,
+             '/tmp/{0}'.format(self.POSTGRESQL_CERT_NAME)),
+            (self.server_key_path,
+             '/tmp/{0}'.format(self.POSTGRESQL_KEY_NAME)),
+            (self.message_queue_cert_path,
+             '/tmp/{0}'.format(self.RABBITMQ_CERT_NAME)),
+            (self.message_queue_key_path,
+             '/tmp/{0}'.format(self.RABBITMQ_KEY_NAME))
         ]
         cluster_instances += [self.database, self.message_queue]
         for instance in cluster_instances:

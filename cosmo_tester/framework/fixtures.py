@@ -89,7 +89,7 @@ def distributed_installation(cfy, ssh_key, module_tmpdir, attributes, logger,
     If request.param has a 'sanity' value: 6 nodes are built (1 DB 1 Queue
     3 managers and an AIO manager)
 
-    With every call 'template_inputs' and'tf_template' can be passed in when
+    With every call 'template_inputs' and 'tf_template' can be passed in when
     creating the TestHosts object
 
     If you need to have your own preconfigure_callback it can be supplied and
@@ -123,17 +123,19 @@ def distributed_installation(cfy, ssh_key, module_tmpdir, attributes, logger,
         })
         # Updating the RabbitMQ machine
         distributed_installation[1].additional_install_config.update({
-            'sanity': SKIP_SANITY,
+            'nodename': 'localhost',
             'services_to_install': QUEUE_SERVICES_TO_INSTALL
         })
         # Updating the 1st manager machine
         distributed_installation[2].additional_install_config.update({
             'sanity': SKIP_SANITY,
             'rabbitmq': {
-                'endpoint_ip':
-                    str(distributed_installation[1].private_ip_address),
-                'management_endpoint_ip':
-                    str(distributed_installation[1].private_ip_address),
+                'cluster_members': {
+                    'localhost': {
+                        'default': str(
+                            distributed_installation[1].private_ip_address),
+                    }
+                }
             },
             'postgresql_client': {
                 'host': str(distributed_installation[0].private_ip_address),
@@ -146,10 +148,12 @@ def distributed_installation(cfy, ssh_key, module_tmpdir, attributes, logger,
             distributed_installation[3].additional_install_config.update({
                 'sanity': SKIP_SANITY,
                 'rabbitmq': {
-                    'endpoint_ip':
-                        str(distributed_installation[1].private_ip_address),
-                    'management_endpoint_ip':
-                        str(distributed_installation[1].private_ip_address),
+                    'cluster_members': {
+                        'localhost': {
+                            'default': str(
+                                distributed_installation[1].private_ip_address),
+                        }
+                    }
                 },
                 'cluster': {
                     'active_manager_ip':
@@ -165,10 +169,12 @@ def distributed_installation(cfy, ssh_key, module_tmpdir, attributes, logger,
             distributed_installation[4].additional_install_config.update({
                 'sanity': SKIP_SANITY,
                 'rabbitmq': {
-                    'endpoint_ip':
-                        str(distributed_installation[1].private_ip_address),
-                    'management_endpoint_ip':
-                        str(distributed_installation[1].private_ip_address),
+                    'cluster_members': {
+                        'localhost': {
+                            'default': str(
+                                distributed_installation[1].private_ip_address),
+                        }
+                    }
                 },
                 'cluster': {
                     'active_manager_ip':
