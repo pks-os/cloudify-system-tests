@@ -1123,14 +1123,14 @@ class DistributedInstallationCloudifyManager(TestHosts):
     """
     Bootstraps a Cloudify Manager with an external PostgreSQL Database
     """
-    ROOT_CERT_NAME = 'root.crt'
-    ROOT_KEY_NAME = 'root.key'
-    POSTGRESQL_CERT_NAME = 'postgresql_server.crt'
-    POSTGRESQL_KEY_NAME= 'postgresql_server.key'
-    RABBITMQ_CERT_NAME = 'rabbitmq_server.crt'
-    RABBITMQ_KEY_NAME = 'rabbitmq_server.key'
     POSTGRESQL_CLIENT_CERT_NAME = 'postgresql_client{0}.crt'
     POSTGRESQL_CLIENT_KEY_NAME = 'postgresql_client{0}.key'
+    POSTGRESQL_SERVER_CERT_NAME = 'postgresql_server.crt'
+    POSTGRESQL_SERVER_KEY_NAME= 'postgresql_server.key'
+    RABBITMQ_CERT_NAME = 'rabbitmq_server.crt'
+    RABBITMQ_KEY_NAME = 'rabbitmq_server.key'
+    ROOT_CERT_NAME = 'root.crt'
+    ROOT_KEY_NAME = 'root.key'
 
     def __init__(self, cluster=False, sanity=False, *args, **kwargs):
         self.cluster = cluster
@@ -1174,10 +1174,10 @@ class DistributedInstallationCloudifyManager(TestHosts):
                                             self.ROOT_KEY_NAME))
 
         # PostgreSQL Server certificates
-        self.server_cert_path = str(os.path.join(self._tmpdir,
-                                                 self.POSTGRESQL_CERT_NAME))
-        self.server_key_path = str(os.path.join(self._tmpdir,
-                                                self.POSTGRESQL_KEY_NAME))
+        self.postgresql_server_cert_path = str(os.path.join(
+            self._tmpdir, self.POSTGRESQL_SERVER_CERT_NAME))
+        self.postgresql_server_key_path = str(os.path.join(
+            self._tmpdir, self.POSTGRESQL_SERVER_KEY_NAME))
 
         # RabbitMQ Server certificates
         self.message_queue_cert_path = str(os.path.join(
@@ -1186,10 +1186,10 @@ class DistributedInstallationCloudifyManager(TestHosts):
             self._tmpdir, self.RABBITMQ_KEY_NAME))
 
         # PostgreSQL Clients certificates
-        self.postgresql_cert_path = str(os.path.join(
+        self.postgresql_client_cert_path = str(os.path.join(
             self._tmpdir, self.POSTGRESQL_CLIENT_CERT_NAME))
-        self.postgresql_key_path = str(os.path.join(
-            self._tmpdir, self.POSTGRESQL_KEY_NAME))
+        self.postgresql_client_key_path = str(os.path.join(
+            self._tmpdir, self.POSTGRESQL_CLIENT_KEY_NAME))
 
     def _create_ssl_certificates_on_instances(self):
         # Generating ROOT CA certificate
@@ -1198,8 +1198,8 @@ class DistributedInstallationCloudifyManager(TestHosts):
         # Generating PostgreSQL server certificates
         util.generate_ssl_certificate([self.database.private_ip_address],
                                       self.database.private_ip_address,
-                                      self.server_cert_path,
-                                      self.server_key_path,
+                                      self.postgresql_server_cert_path,
+                                      self.postgresql_server_key_path,
                                       self.ca_cert_path,
                                       self.ca_key_path)
 
@@ -1211,9 +1211,9 @@ class DistributedInstallationCloudifyManager(TestHosts):
         self.database.additional_install_config.update({
             'ssl_inputs': {
                 'postgresql_server_cert_path': '/tmp/{0}'.format(
-                    self.POSTGRESQL_CERT_NAME),
+                    self.POSTGRESQL_SERVER_CERT_NAME),
                 'postgresql_server_key_path': '/tmp/{0}'.format(
-                    self.POSTGRESQL_KEY_NAME),
+                    self.POSTGRESQL_SERVER_KEY_NAME),
                 'ca_cert_path': '/tmp/{0}'.format(self.ROOT_CERT_NAME),
                 'ca_key_path': '/tmp/{0}'.format(self.ROOT_KEY_NAME)
             }
@@ -1242,8 +1242,8 @@ class DistributedInstallationCloudifyManager(TestHosts):
             cert_path, key_path = util.generate_ssl_certificate(
                 [instance.private_ip_address],
                 instance.private_ip_address,
-                self.postgresql_cert_path + str(instance.index),
-                self.postgresql_key_path + str(instance.index),
+                self.postgresql_client_cert_path.format(str(instance.index)),
+                self.postgresql_client_key_path.format(str(instance.index)),
                 self.ca_cert_path,
                 self.ca_key_path)
             certificates_files_to_copy.append(
@@ -1251,16 +1251,16 @@ class DistributedInstallationCloudifyManager(TestHosts):
                     cert_path,
                     '/tmp/{0}'.format(
                         self.POSTGRESQL_CLIENT_CERT_NAME.format(
-                            instance.index)
+                            str(instance.index))
                     )
                 )
             )
             certificates_files_to_copy.append(
                 (
-                    cert_path,
+                    key_path,
                     '/tmp/{0}'.format(
                         self.POSTGRESQL_CLIENT_KEY_NAME.format(
-                            instance.index)
+                            str(instance.index))
                     )
                 )
             )
@@ -1275,11 +1275,13 @@ class DistributedInstallationCloudifyManager(TestHosts):
             instance.additional_install_config.update({
                 'ssl_inputs': {
                     'postgresql_client_cert_path':
-                        '/tmp/'.format(self.POSTGRESQL_CLIENT_CERT_NAME.format(
-                            instance.index)),
+                        '/tmp/{0}'.format(
+                            self.POSTGRESQL_CLIENT_CERT_NAME.format(
+                                str(instance.index))),
                     'postgresql_client_key_path':
-                        '/tmp/'.format(self.POSTGRESQL_CLIENT_KEY_NAME.format(
-                            instance.index)),
+                        '/tmp/{0}'.format(
+                            self.POSTGRESQL_CLIENT_KEY_NAME.format(
+                                str(instance.index))),
                     'ca_cert_path': '/tmp/{0}'.format(self.ROOT_CERT_NAME),
                     'ca_key_path': '/tmp/{0}'.format(self.ROOT_KEY_NAME)
                 }
@@ -1293,10 +1295,10 @@ class DistributedInstallationCloudifyManager(TestHosts):
              '/tmp/{0}'.format(self.ROOT_CERT_NAME)),
             (self.ca_key_path,
              '/tmp/{0}'.format(self.ROOT_KEY_NAME)),
-            (self.server_cert_path,
-             '/tmp/{0}'.format(self.POSTGRESQL_CERT_NAME)),
-            (self.server_key_path,
-             '/tmp/{0}'.format(self.POSTGRESQL_KEY_NAME)),
+            (self.postgresql_server_cert_path,
+             '/tmp/{0}'.format(self.POSTGRESQL_SERVER_CERT_NAME)),
+            (self.postgresql_server_key_path,
+             '/tmp/{0}'.format(self.POSTGRESQL_SERVER_KEY_NAME)),
             (self.message_queue_cert_path,
              '/tmp/{0}'.format(self.RABBITMQ_CERT_NAME)),
             (self.message_queue_key_path,
