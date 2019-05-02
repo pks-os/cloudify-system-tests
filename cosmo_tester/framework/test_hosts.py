@@ -366,7 +366,7 @@ class _CloudifyManager(VM):
         status = self.client.manager.get_status()
         for service in status['services']:
             for instance in service['instances']:
-                if any(service not in instance['Id'] for
+                if all(service not in instance['Id'] for
                        service in ['postgresql', 'rabbitmq']):
                     assert instance['SubState'] == 'running', \
                         'service {0} is in {1} state'.format(
@@ -649,7 +649,7 @@ class _CloudifyMessageQueueOnly(_CloudifyManager):
         with self.ssh() as fabric_ssh:
             # validate PostgreSQL server is running
             try:
-                fabric_ssh.sudo('rabbitmqctl -n cloudify-manager@localhost '
+                fabric_ssh.sudo('rabbitmqctl -n rabbit@localhost '
                                 'list_users &> /dev/null')
                 self._logger.info('RabbitMQ active')
                 return True
